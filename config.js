@@ -1,4 +1,4 @@
 /* Pega aquí la dirección (URL) de tu Apps Script, la que termina en /exec */
 window.CONFIG_BLOQUERA = {
-  urlApi: 'PEGA_AQUI_LA_URL_DE_TU_APPS_SCRIPT'
+  urlApi: 'https://script.google.com/macros/s/AKfycbwNUs5wmLARIiTAapwYzcW_5Fl9WJvTrBpl1HEqLTGEpIsPLI7i2lxQXMP67OEO7wTo_g/exec'
 };

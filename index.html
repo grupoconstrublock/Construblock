@@ -410,7 +410,7 @@ input.cell.date{width:140px}
       <div class="gtotales" id="gTotales"></div>
       <div class="gsec">
         <h2 class="sechead">Costos</h2>
-        <p class="note" style="margin:0 0 10px">Insumos, gastos operativos y sueldos.</p>
+        <p class="note" style="margin:0 0 10px">Insumos, materiales, gastos operativos y sueldos. Los materiales que vendes (acero, polvos, otros) se agregan solos con el costo del catálogo de cada nota; ya están descontados en la utilidad bruta.</p>
         <div class="grid2">
           <div class="box"><div class="tbl"><table id="tCostos"></table></div></div>
           <div class="box"><h3>Costos por categoría</h3><div class="bars" id="barrasCostos"></div></div>
@@ -535,12 +535,18 @@ const hoy=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()
 const fFecha=f=>{if(!f)return '';const [y,m,d]=f.split('-');return d+'/'+m+'/'+y};
 
 const TIPOS_GASTO={
-  'Costos':{'Insumos':['Jal','Cemento','Gasolina'],'Gastos operativos':['Renta','Luz'],'Sueldos':['Chayane','Tigre','David','Pablo']},
+  'Costos':{'Insumos':['Jal','Cemento','Gasolina'],'Materiales':[],'Gastos operativos':['Renta','Luz'],'Sueldos':['Chayane','Tigre','David','Pablo']},
   'Gastos':{'Generales':['Herramienta','Equipo','Otros'],'Camioneta':['Servicio','Reparación']}
 };
 const CATEGORIAS_GASTO=Object.assign({},TIPOS_GASTO.Costos,TIPOS_GASTO.Gastos);
 const RENOMBRE_CAT={'Gastos fijos':'Gastos operativos','Camioneta (servicio)':'Camioneta'};
 const catGasto=g=>RENOMBRE_CAT[g.categoria]||g.categoria||'Generales';
+function costosAuto(){
+  return S.ventas.filter(v=>v.productoId&&v.categoria&&v.categoria!=='Block'&&v.categoria!=='Manual').map(v=>{const c=v.costoUnit!=null?Number(v.costoUnit):(prod(v.productoId)?.costo||0),q=Number(v.cantidad)||0;
+    return {id:'auto-'+v.id,auto:true,ventaId:v.id,folio:v.folio,fecha:v.fecha,tipo:'Costos',categoria:'Materiales',concepto:v.producto,detalle:(v.folio?'Nota #'+v.folio:'Venta')+' · '+num(q)+' × '+money(c),monto:q*c,pago:v.pagoCosto||'Pendiente de pago',creado:v.creado}});
+}
+const gastosTodos=()=>[...S.gastos,...costosAuto()];
+const sumaAuto=L=>L.filter(g=>g.auto).reduce((s,g)=>s+(Number(g.monto)||0),0);
 const tipoGasto=g=>g.tipo||(TIPOS_GASTO.Costos[catGasto(g)]?'Costos':'Gastos');
 
 const S={productos:[],ventas:[],entradas:[],gastos:[],clientes:[],config:[],cotizaciones:[]};
@@ -634,11 +640,11 @@ function opcionesProductos(){
   opcionesCliente();
 }
 function renderResumen(){
-  const V=S.ventas.filter(v=>enPeriodo(v.fecha)), G=S.gastos.filter(g=>enPeriodo(g.fecha));
+  const V=S.ventas.filter(v=>enPeriodo(v.fecha)), G=gastosTodos().filter(g=>enPeriodo(g.fecha));
   const venta=V.reduce((s,v)=>s+venta_total(v),0);
   const util=V.reduce((s,v)=>s+(venta_util(v)||0),0);
   const gasto=G.reduce((s,g)=>s+(Number(g.monto)||0),0);
-  const neta=util-gasto;
+  const neta=util-(gasto-sumaAuto(G));
   const pend=S.ventas.filter(v=>v.pago==='Pendiente');
   const porCobrar=pend.reduce((s,v)=>s+venta_total(v),0);
   let invCosto=0,invPrecio=0;S.productos.filter(p=>p.inventario).forEach(p=>{const st=stockDe(p.id).stock;invCosto+=st*(costoDe(p)||0);invPrecio+=st*(p.precio||0)});
@@ -646,9 +652,9 @@ function renderResumen(){
   $('#kpis').innerHTML=[
     ['Ventas',money(venta),V.length+' ventas · '+per,''],
     ['Utilidad bruta',money(util),venta?Math.round(util/venta*100)+'% sobre venta':'—',''],
-    ['Costos',money(G.filter(g=>tipoGasto(g)==='Costos').reduce((s,g)=>s+(Number(g.monto)||0),0)),'insumos, operativos y sueldos',''],
+    ['Costos',money(G.filter(g=>tipoGasto(g)==='Costos').reduce((s,g)=>s+(Number(g.monto)||0),0)),'insumos, materiales, operativos y sueldos',''],
     ['Gastos',money(G.filter(g=>tipoGasto(g)==='Gastos').reduce((s,g)=>s+(Number(g.monto)||0),0)),'generales y camioneta',''],
-    ['Utilidad neta',money(neta),'bruta − costos − gastos',neta<0?'neg':'pos'],
+    ['Utilidad neta',money(neta),'bruta − costos − gastos (materiales ya van en la bruta)',neta<0?'neg':'pos'],
     ['Por cobrar',money(porCobrar),pend.length+' ventas pendientes',porCobrar>0?'neg':''],
     ['Inventario a costo',money(invCosto),'a precio de venta '+money(invPrecio),invCosto<0?'neg':'']
   ].map(k=>'<div class="kpi '+k[3]+'"><div class="lbl">'+k[0]+'</div><div class="val">'+k[1]+'</div><div class="sub">'+esc(k[2])+'</div></div>').join('');
@@ -690,12 +696,12 @@ function renderInventario(){
     return '<tr><td class="dim">'+esc(p.nombre)+'</td><td class="n">'+num(s.ent)+'</td><td class="n">'+num(s.sal)+'</td><td class="n"><b>'+num(s.stock)+'</b></td><td class="n">'+num(s.pend)+'</td><td class="n">'+num(s.disp)+'</td><td>'+est+'</td><td class="n">'+money(costoDe(p))+'</td><td class="n">'+money(p.precio)+'</td><td class="n">'+money(vc)+'</td><td class="n">'+money(vp)+'</td></tr>'}).join('')+'</tbody><tfoot><tr><td colspan="9">Total</td><td class="n">'+money(tc)+'</td><td class="n">'+money(tp)+'</td></tr></tfoot>';
 }
 function renderGastos(){
-  const G=S.gastos.filter(g=>enPeriodo(g.fecha)).sort(ordenFecha);
+  const G=gastosTodos().filter(g=>enPeriodo(g.fecha)).sort(ordenFecha);
   const sum=L=>L.reduce((s,g)=>s+(Number(g.monto)||0),0);
   const C=G.filter(g=>tipoGasto(g)==='Costos'),X=G.filter(g=>tipoGasto(g)==='Gastos');
   $('#gTotales').innerHTML=[['Costos',sum(C),C.length],['Gastos',sum(X),X.length],['Total',sum(G),G.length]].map(([l,v,n])=>'<div class="kpi"><div class="lbl">'+l+'</div><div class="val">'+money(v)+'</div><div class="sub">'+n+' registro'+(n===1?'':'s')+'</div></div>').join('');
   const tabla=(L,id,vacio)=>{if(!L.length){$(id).innerHTML='<tbody><tr><td class="empty">'+vacio+'</td></tr></tbody>';return}
-    $(id).innerHTML='<thead><tr><th>Fecha</th><th>Categoría</th><th>Concepto</th><th class="n">Monto</th><th>Pago</th><th></th></tr></thead><tbody>'+L.map(g=>'<tr><td class="d">'+fFecha(g.fecha)+'</td><td>'+esc(catGasto(g))+'</td><td>'+esc(g.concepto)+(g.detalle?'<div class="note">'+esc(g.detalle)+'</div>':'')+'</td><td class="n">'+money(g.monto)+'</td><td>'+(g.pago==='Pendiente de pago'?'<div class="cobrar"><span class="chip bad">Pendiente</span><select id="gp-'+esc(g.id)+'" aria-label="Cómo se pagó"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option></select><button type="button" class="btn sm" data-gastopagado="'+esc(g.id)+'">Pagado</button></div>':'<span class="chip neu">'+esc((g.pago||'').replace('Tarjeta Jr','Tarjeta'))+'</span>')+'</td><td><button class="btn sm del" data-delgasto="'+esc(g.id)+'">Borrar</button></td></tr>').join('')+'</tbody><tfoot><tr><td colspan="3">Total</td><td class="n">'+money(sum(L))+'</td><td colspan="2"></td></tr></tfoot>'};
+    $(id).innerHTML='<thead><tr><th>Fecha</th><th>Categoría</th><th>Concepto</th><th class="n">Monto</th><th>Pago</th><th></th></tr></thead><tbody>'+L.map(g=>'<tr><td class="d">'+fFecha(g.fecha)+'</td><td>'+esc(catGasto(g))+'</td><td>'+esc(g.concepto)+(g.detalle?'<div class="note">'+esc(g.detalle)+'</div>':'')+'</td><td class="n">'+money(g.monto)+'</td><td>'+(g.pago==='Pendiente de pago'?'<div class="cobrar"><span class="chip bad">Pendiente</span><select id="gp-'+esc(g.id)+'" aria-label="Cómo se pagó"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option></select><button type="button" class="btn sm" '+(g.auto?'data-costopagado="'+esc(g.ventaId)+'"':'data-gastopagado="'+esc(g.id)+'"')+'>Pagado</button></div>':'<span class="chip neu">'+esc((g.pago||'').replace('Tarjeta Jr','Tarjeta'))+'</span>')+'</td><td>'+(g.auto?'':'<button class="btn sm del" data-delgasto="'+esc(g.id)+'">Borrar</button>')+'</td></tr>').join('')+'</tbody><tfoot><tr><td colspan="3">Total</td><td class="n">'+money(sum(L))+'</td><td colspan="2"></td></tr></tfoot>'};
   tabla(C,'#tCostos','Sin costos en este periodo. Captura insumos, gastos operativos o sueldos con el formulario de arriba.');
   tabla(X,'#tGastosG','Sin gastos en este periodo. Captura gastos generales o de la camioneta con el formulario de arriba.');
   const barras=(L,tp,id,cls)=>{const c={};L.forEach(g=>{const k=catGasto(g);c[k]=(c[k]||0)+(Number(g.monto)||0)});const cats=[...new Set([...Object.keys(TIPOS_GASTO[tp]),...Object.keys(c)])];const mx=Math.max(1,...Object.values(c));
@@ -858,17 +864,17 @@ $('#vBuscar').addEventListener('input',renderVentas);
 const RPT={ventas:'#3A5BC7',util:'#14958F',gastos:'#DF5F1D',costos:'#DF5F1D',gastosG:'#8A5CC8',ink:'#22252A',muted:'#6E6A64',grid:'#E4E0DA',head:'#2B2E33'};
 function etiquetaPeriodo(){if(periodo==='todo')return 'Todas las fechas';if(periodo.startsWith('S:'))return 'Semana '+etiquetaSemana(periodo.slice(2));const [y,m]=periodo.split('-');return MESES[+m-1].replace(/^./,c=>c.toUpperCase())+' '+y}
 function cubetasReporte(){
-  const V=S.ventas.filter(v=>v.fecha&&enPeriodo(v.fecha)),G=S.gastos.filter(g=>g.fecha&&enPeriodo(g.fecha));
+  const V=S.ventas.filter(v=>v.fecha&&enPeriodo(v.fecha)),G=gastosTodos().filter(g=>g.fecha&&enPeriodo(g.fecha));
   let modo,keyOf,keys;
   const DIAS=['lun','mar','mié','jue','vie','sáb','dom'];
   if(periodo.startsWith('S:')){modo='día';const ini=periodo.slice(2);keys=[];for(let i=0;i<7;i++){const [a,b,c]=ini.split('-').map(Number);keys.push(isoLocal(new Date(a,b-1,c+i)))}keyOf=f=>f;
     keys=keys.map((k,i)=>[k,DIAS[i]+' '+Number(k.slice(8))])}
   else if(periodo==='todo'){modo='mes';const set=new Set([...V,...G].map(r=>r.fecha.slice(0,7)));const ks=[...set].sort().slice(-12);keyOf=f=>f.slice(0,7);keys=ks.map(k=>[k,MES3[+k.slice(5)-1]+' '+k.slice(2,4)])}
   else{modo='semana';const [y,m]=periodo.split('-').map(Number);const ult=isoLocal(new Date(y,m,0));let w=inicioSemana(periodo+'-01');keys=[];while(w<=ult){keys.push([w,Number(w.slice(8))+' '+MES3[+w.slice(5,7)-1]]);const [a,b,c]=w.split('-').map(Number);w=isoLocal(new Date(a,b-1,c+7))}keyOf=f=>inicioSemana(f)}
-  const idx={};keys.forEach(([k],i)=>idx[k]=i);const z=()=>keys.map(()=>0);const sv=z(),su=z(),sg=z(),sc=z(),sx=z();
+  const idx={};keys.forEach(([k],i)=>idx[k]=i);const z=()=>keys.map(()=>0);const sv=z(),su=z(),sg=z(),sc=z(),sx=z(),sa=z();
   V.forEach(v=>{const i=idx[keyOf(v.fecha)];if(i!=null){sv[i]+=venta_total(v);su[i]+=venta_util(v)||0}});
-  G.forEach(g=>{const i=idx[keyOf(g.fecha)];if(i!=null){const m=Number(g.monto)||0;sg[i]+=m;(tipoGasto(g)==='Costos'?sc:sx)[i]+=m}});
-  return {modo,labels:keys.map(k=>k[1]),sv,su,sg,sc,sx};
+  G.forEach(g=>{const i=idx[keyOf(g.fecha)];if(i!=null){const m=Number(g.monto)||0;sg[i]+=m;(tipoGasto(g)==='Costos'?sc:sx)[i]+=m;if(g.auto)sa[i]+=m}});
+  return {modo,labels:keys.map(k=>k[1]),sv,su,sg,sc,sx,sa};
 }
 const moneyCorto=n=>{const a=Math.abs(n);return (n<0?'-':'')+'$'+(a>=1e6?(a/1e6).toFixed(1)+'M':a>=1e3?(a/1e3).toFixed(a>=1e4?0:1)+'k':Math.round(a))};
 function niceMax(v){if(v<=0)return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));const f=v/e;return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*e}
@@ -896,7 +902,7 @@ function nuevaPagina(){const PX=150/72,cv=document.createElement('canvas');cv.wi
 async function construirReporte(){
   try{await document.fonts.ready}catch(e){}
   const n=negocio(),logo=await cargarImg(n.logoUrl),per=etiquetaPeriodo(),M=40,CW=612-2*M;
-  const V=S.ventas.filter(v=>enPeriodo(v.fecha)),G=S.gastos.filter(g=>enPeriodo(g.fecha));
+  const V=S.ventas.filter(v=>enPeriodo(v.fecha)),G=gastosTodos().filter(g=>enPeriodo(g.fecha));
   const venta=V.reduce((s,v)=>s+venta_total(v),0),util=V.reduce((s,v)=>s+(venta_util(v)||0),0),gasto=G.reduce((s,g)=>s+(Number(g.monto)||0),0);
   const costoT=G.filter(g=>tipoGasto(g)==='Costos').reduce((s,g)=>s+(Number(g.monto)||0),0),gastoT=gasto-costoT;
   const cobrar=V.filter(v=>v.pago==='Pendiente').reduce((s,v)=>s+venta_total(v),0);
@@ -910,7 +916,7 @@ async function construirReporte(){
     if(!mini){c.fillStyle='#B7B4AE';c.font='10px Figtree,Arial,sans-serif';c.fillText('Generado el '+fFecha(hoy()),612-M,48)}};
   encabezado(ctx);let y=100;
   // KPIs
-  const K=[['Ventas',venta,RPT.ink],['Utilidad bruta',util,RPT.ink],['Costos',costoT,RPT.ink],['Gastos',gastoT,RPT.ink],['Utilidad neta',util-gasto,util-gasto<0?'#B3261E':'#2E7D4F'],['Por cobrar',cobrar,cobrar>0?'#B3261E':RPT.ink]];
+  const K=[['Ventas',venta,RPT.ink],['Utilidad bruta',util,RPT.ink],['Costos',costoT,RPT.ink],['Gastos',gastoT,RPT.ink],['Utilidad neta',util-(gasto-sumaAuto(G)),util-(gasto-sumaAuto(G))<0?'#B3261E':'#2E7D4F'],['Por cobrar',cobrar,cobrar>0?'#B3261E':RPT.ink]];
   const kw=(CW-5*8)/6;K.forEach(([l,v,col],i)=>{const x=M+i*(kw+8);ctx.strokeStyle=RPT.grid;ctx.lineWidth=1;ctx.beginPath();ctx.roundRect?ctx.roundRect(x,y,kw,52,6):ctx.rect(x,y,kw,52);ctx.stroke();
     ctx.fillStyle=RPT.muted;ctx.font='600 7.5px Figtree,Arial,sans-serif';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(l.toUpperCase(),x+8,y+15);
     ctx.fillStyle=col;ctx.font='700 12.5px Figtree,Arial,sans-serif';let t=money(v);ctx.fillText(t,x+8,y+35)});
@@ -938,7 +944,7 @@ async function construirReporte(){
   const cols1=[[cb.modo.replace(/^./,c=>c.toUpperCase()),M,'left'],['Ventas',M+190,'right'],['Utilidad bruta',M+275,'right'],['Costos',M+355,'right'],['Gastos',M+435,'right'],['Utilidad neta',M+CW,'right']];
   const filaTabla=(c,yy,vals,cols,bold)=>{c.font=(bold?'700 ':'')+'9.5px Figtree,Arial,sans-serif';c.fillStyle=bold?RPT.muted:RPT.ink;c.textBaseline='middle';cols.forEach(([,x,al],i)=>{c.textAlign=al;c.fillText(String(vals[i]),x,yy)});c.strokeStyle=RPT.grid;c.lineWidth=.6;c.beginPath();c.moveTo(M,yy+8);c.lineTo(M+CW,yy+8);c.stroke()};
   filaTabla(ctx,y+6,cols1.map(c=>c[0].toUpperCase()),cols1,true);y+=18;
-  cb.labels.forEach((l,i)=>{if(y>760){pg=nuevaPagina();ctx=pg.ctx;paginas.push(pg);encabezado(ctx,true);y=70}filaTabla(ctx,y+6,[l,money(cb.sv[i]),money(cb.su[i]),money(cb.sc[i]),money(cb.sx[i]),money(cb.su[i]-cb.sg[i])],cols1);y+=18});
+  cb.labels.forEach((l,i)=>{if(y>760){pg=nuevaPagina();ctx=pg.ctx;paginas.push(pg);encabezado(ctx,true);y=70}filaTabla(ctx,y+6,[l,money(cb.sv[i]),money(cb.su[i]),money(cb.sc[i]),money(cb.sx[i]),money(cb.su[i]-(cb.sg[i]-cb.sa[i]))],cols1);y+=18});
   // Pagina de detalle
   pg=nuevaPagina();ctx=pg.ctx;paginas.push(pg);encabezado(ctx,true);y=74;
   const titulo=t=>{ctx.fillStyle=RPT.ink;ctx.font='600 14px Georgia,serif';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(t,M,y);y+=14};
@@ -1215,7 +1221,7 @@ function ordenesDe(V){
 function categoriasTipo(){$('#gDetalleWrap').hidden=$('#gTipo').value!=='Gastos';$('#gCategoria').innerHTML=Object.keys(TIPOS_GASTO[$('#gTipo').value]).map(c=>'<option>'+esc(c)+'</option>').join('');conceptos()}
 $('#gTipo').addEventListener('change',categoriasTipo);
 $('#gCategoria').innerHTML=Object.keys(TIPOS_GASTO.Costos).map(c=>'<option>'+esc(c)+'</option>').join('');
-function conceptos(){$('#dlConceptos').innerHTML=(CATEGORIAS_GASTO[$('#gCategoria').value]||[]).map(c=>'<option value="'+esc(c)+'">').join('')}
+function conceptos(){const cat=$('#gCategoria').value;$('#dlConceptos').innerHTML=(cat==='Materiales'?S.productos.filter(p=>p.categoria!=='Block').map(p=>p.nombre).sort():(CATEGORIAS_GASTO[cat]||[])).map(c=>'<option value="'+esc(c)+'">').join('')}
 $('#gCategoria').addEventListener('change',conceptos);conceptos();
 
 function nuevaLinea(){lineas.push({k:++lineaSeq,categoria:'Block',productoId:'',cantidad:'',precio:''});renderLineas();const s=document.getElementById('lp-'+lineaSeq);if(s&&lineas.length>1)s.focus()}
@@ -1350,6 +1356,7 @@ $('#fProducto').addEventListener('submit',e=>{e.preventDefault();if(!db)return s
 document.addEventListener('click',e=>{
   const t=e.target.closest('button');if(!t)return;
   if(t.dataset.ircosto){abrir('produccioncosto');window.scrollTo(0,0);return}
+  if(t.dataset.costopagado){if(!db)return sinDb();const vid=t.dataset.costopagado,forma=document.getElementById('gp-auto-'+vid).value;guardar(db.collection('ventas').doc(vid).update({pagoCosto:forma,fechaPagoCosto:hoy()}),'Material marcado como pagado');return}
   if(t.dataset.gastopagado){if(!db)return sinDb();const id=t.dataset.gastopagado,forma=document.getElementById('gp-'+id).value;guardar(db.collection('gastos').doc(id).update({pago:forma,fechaPago:hoy()}),'Gasto marcado como pagado');return}
   if(t.dataset.prodeditar){prodEdit=t.dataset.prodeditar;renderPrecios();const el=document.getElementById('pen-'+prodEdit);if(el)el.focus();return}
   if(t.dataset.prodcancel){prodEdit=null;renderPrecios();return}
